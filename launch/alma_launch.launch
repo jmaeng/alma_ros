@@ -1,0 +1,4 @@
+<launch>
+  <node pkg="alma_ros_pkg" type="alma_node.py" name="alma_node"/>
+  <node pkg="alma_ros_pkg" type="alma_node_publisher.py" name="alma_db" output="screen"/>
+</launch>

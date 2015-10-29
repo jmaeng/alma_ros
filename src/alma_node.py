@@ -99,10 +99,8 @@ def main():
     # Listen to alma_node_cmd topic for commands.  Right now they'll just be strings; we'll probably
     # want more structure long term.
     rospy.init_node('alma_node')
-    rospy.Subscriber("alma_node_cmd", String, alma_cmd_callback)
-    #rospy.spin()
-    # 
-    alma_publish_db()
+    rospy.Subscriber("alma_node_cmd", String, alma_cmd_callback) # this node called 'alma_node' subscribes to the ros topic called 'alma_node_cmd' and invokes with the message as the first arg.
+    # alma_publish_db()
     rospy.spin()
 
 
