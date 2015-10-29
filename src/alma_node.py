@@ -71,7 +71,9 @@ class alma_io:
         self.locked = True
         sys.stdout.write(command + '\n')
         sys.stderr.write("Sending " + command + "\n")
+        sys.stdout.flush()
         self.locked = False
+        self.at_prompt = False
         
     # def getch(self):
     #     """getch() -> key character
@@ -98,15 +100,19 @@ class alma_io:
     #     return ch
 
     def getch(self):
-        return sys.stdin.read(1)
+        a = sys.stdin.read(1)
+        return a
 
     def read_line(self):
-        while self.locked:  time.sleep(0.1)
+        while self.locked:
+            sys.stderr.write('read locked! ')
+            time.sleep(0.1)
         self.locked = True
         num_ch = 0
         line = []
         ch = self.getch()
         while ch != '\n':
+            sys.stderr.write("Read " + str(ch) + "; ")
             line += ch
             num_ch += 1
             if (num_ch == 5) and (line == ['a', 'l', 'm', 'a', ':']):
@@ -163,9 +169,12 @@ def alma_publish_db():
         sys.stderr.write('SENT SDB')
 
         # Get the response, send each line to the topic
+        sys.stderr.write('Asking for a new line')
         line = io.read_line()
+        sys.stderr.write('Got line: ' + line.line)
         while not line.is_prompt:
             db_pub.publish(line.line)
+            sys.stderr.write('Sent line: ' + line.line)
             line = io.read_line()
         rate.sleep()
 
