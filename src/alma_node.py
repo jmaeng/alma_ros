@@ -112,7 +112,6 @@ class alma_io:
         line = []
         ch = self.getch()
         while ch != '\n':
-            sys.stderr.write("Read " + str(ch) + "; ")
             line += ch
             num_ch += 1
             if (num_ch == 5) and (line == ['a', 'l', 'm', 'a', ':']):
