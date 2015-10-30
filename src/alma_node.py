@@ -6,7 +6,10 @@ import tty, termios
 import time
 
 ALMA_BIN="/home/justin/catkin_ws/src/rosalma/scripts/alma"
+DEBUG=False
 #ALMA_BIN="/home/jyna/Alfred/Alma/alma"
+
+io = None
 
 """
 spawn a child process/program, connect my stdin/stdout to child process's
@@ -57,20 +60,17 @@ class alma_io:
 
     def wait_for_prompt(self):
         if not self.at_prompt:  
-            sys.stderr.write('B\n')
             line = self.read_line()
             while not line.is_prompt:   line = self.read_line()
             self.at_prompt = True
 
     def write(self, command):
-        sys.stderr.write("WA\n")
         while self.locked:  time.sleep(0.1)
-        sys.stderr.write("WB\n")
         self.wait_for_prompt()
-        sys.stderr.write("WC\n")
         self.locked = True
+        if DEBUG:
+            sys.stderr.write("Sending " + command + "\n")
         sys.stdout.write(command + '\n')
-        sys.stderr.write("Sending " + command + "\n")
         sys.stdout.flush()
         self.locked = False
         self.at_prompt = False
@@ -105,7 +105,7 @@ class alma_io:
 
     def read_line(self):
         while self.locked:
-            sys.stderr.write('read locked! ')
+            if DEBUG: sys.stderr.write('read locked! ')
             time.sleep(0.1)
         self.locked = True
         num_ch = 0
@@ -116,12 +116,12 @@ class alma_io:
             num_ch += 1
             if (num_ch == 5) and (line == ['a', 'l', 'm', 'a', ':']):
                 self.locked = False
-                sys.stderr.write("Read line " + ''.join(line) + " (==prompt) from alma.\n")
+                if DEBUG: sys.stderr.write("Read line " + ''.join(line) + " (==prompt) from alma.\n")
                 self.at_prompt = True
                 return alma_line('', True)
             ch = self.getch()
         self.locked = False
-        sys.stderr.write("Read line: " + ''.join(line) + " from alma.\n")
+        if DEBUG: sys.stderr.write("Read line: " + ''.join(line) + " from alma.\n")
         self.at_prompt = False
         return alma_line(''.join(line)  , False)
         
@@ -130,59 +130,49 @@ class alma_io:
 Read commands on the topic and send them to alma. 
 """        
 def alma_cmd_callback(data):
+    global io
     cmd_string = data.data
-    sys.stdout.write(cmd_string)
-    sys.stdout.flush()
-    
-    reply = raw_input()
-    sys.stdin.flush()
-    sys.stderr.write('****GOT:  ' + reply + 'FROM ALMA.')
+    io.write(cmd_string)
 
-    a = reply.split(':')
-    while (not (a[0] == 'alma')):
-        reply = raw_input()
-        sys.stdin.flush()
-        sys.stderr.write('****GOT:  ' + reply + 'FROM ALMA.')
-        a = reply.split(':')
 
 
 """
 Get the database and publish each line on the topic.
 """
 def alma_publish_db():
+    global io
+    
     sys.stderr.write('IN ALMA PUBLISH DB')
     db_pub = rospy.Publisher("alma_db", String, queue_size=100)
-    rate = rospy.Rate(10)
-    io = alma_io(ALMA_BIN)
-    while not rospy.is_shutdown():
-        sys.stderr.write('A')
+    rate = rospy.Rate(1)
 
-        sys.stderr.write('B')
+    while not rospy.is_shutdown():
         # Step once in the logic engine
-        sys.stderr.write('STEPPING')
+        if DEBUG: sys.stderr.write('STEPPING')
         io.write('sr.')
-        sys.stderr.write('SENT SR')
+        if DEBUG: sys.stderr.write('SENT SR')
         
         # Ask for the database
         io.write('sdb.')
-        sys.stderr.write('SENT SDB')
+        if DEBUG: sys.stderr.write('SENT SDB')
 
         # Get the response, send each line to the topic
-        sys.stderr.write('Asking for a new line')
         line = io.read_line()
-        sys.stderr.write('Got line: ' + line.line)
+        if DEBUG: sys.stderr.write('Got line: ' + line.line)
         while not line.is_prompt:
             db_pub.publish(line.line)
-            sys.stderr.write('Sent line: ' + line.line)
+            if DEBUG: sys.stderr.write('Sent line: ' + line.line)
             line = io.read_line()
         rate.sleep()
 
 
 def main():
+    global io
     # Listen to alma_node_cmd topic for commands.  Right now they'll just be strings; we'll probably
     # want more structure long term.
     rospy.init_node('alma_node')
-#    rospy.Subscriber("alma_node_cmd", String, alma_cmd_callback) # this node called 'alma_node' subscribes to the ros topic called 'alma_node_cmd' and invokes with the message as the first arg.
+    io = alma_io(ALMA_BIN)
+    rospy.Subscriber("alma_node_cmd", String, alma_cmd_callback) # this node called 'alma_node' subscribes to the ros topic called 'alma_node_cmd' and invokes with the message as the first arg.
     alma_publish_db()
     rospy.spin()
 
