@@ -5,11 +5,12 @@ import os, sys
 import tty, termios
 import time
 
-ALMA_BIN="/home/justin/catkin_ws/src/rosalma/scripts/alma"
+#ALMA_BIN="/home/justin/catkin_ws/src/rosalma/scripts/alma"
 DEBUG=False
-#ALMA_BIN="/home/jyna/Alfred/Alma/alma"
+ALMA_BIN="/home/jyna/Alfred/Alma/alma"
 
 io = None
+db_list = ["start"]
 
 """
 spawn a child process/program, connect my stdin/stdout to child process's
@@ -63,7 +64,8 @@ class alma_io:
             line = self.read_line()
             while not line.is_prompt:   line = self.read_line()
             self.at_prompt = True
-
+            
+    # writes a command out to alma to execute.
     def write(self, command):
         while self.locked:  time.sleep(0.1)
         self.wait_for_prompt()
@@ -147,6 +149,7 @@ def alma_publish_db():
     rate = rospy.Rate(1)
 
     while not rospy.is_shutdown():
+    # TODO How does Alma know when to stop stepping?
         # Step once in the logic engine
         if DEBUG: sys.stderr.write('STEPPING')
         io.write('sr.')
@@ -155,15 +158,33 @@ def alma_publish_db():
         # Ask for the database
         io.write('sdb.')
         if DEBUG: sys.stderr.write('SENT SDB')
-
+        
         # Get the response, send each line to the topic
         line = io.read_line()
+        #tmp_line = line
         if DEBUG: sys.stderr.write('Got line: ' + line.line)
-        while not line.is_prompt:
-            db_pub.publish(line.line)
+        while not line.is_prompt: # this is infinite loop because line will never be set to prompt in this code.
+            #db_pub.publish(line.line) #one line of the whole database, so program is printing out multiple copies of database each time a command is given.
+            #tmp_line = line
+            if (line.line.find("idling") == -1 and 
+            	line.line.find("now") == -1):
+            	db_list.append(line.line);
+
+            db_pub.publish('\n'.join(db_list)); 
+            #publishing the whole list every time for now until we figure out
+            #what we want to do with this list.
+
             if DEBUG: sys.stderr.write('Sent line: ' + line.line)
             line = io.read_line()
+            #if line.line is '': 
+             #   db_pub.publish(tmp_line.line)
+              #  line.is_prompt = True
         rate.sleep()
+        
+        #options: we want to first save everything that comes up, so we have to get rid of doubles. But alma
+        #prints the whole database always. So how to filter through this data base to find the most recent ones
+        #that aren't already in the database.
+        #how to save information to a database at all?
 
 
 def main():
@@ -179,3 +200,14 @@ def main():
 
 if __name__ == '__main__':
     main()    
+
+
+#TODO
+#Try to structure the output of the publisher so that the messages have three parts:  
+# i.  Timestamp, 
+# ii.  Whatever that other number before all the sentences is, 
+# iii.  The actual sentence
+
+#Structure the subscriber to take messages with two parts:  
+# i.  The kind of thing we want to do (add a formula or delete would be the two logical places to start), 
+# ii.  The actual formula
