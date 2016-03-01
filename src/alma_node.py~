@@ -1,21 +1,16 @@
 #!/usr/bin/env python
 import rospy
 from std_msgs.msg import String
-from alma_ros_pkg.msg import AlmaFmla
-from alma_ros_pkg.msg import AlmaDB
-
 import os, sys
 import tty, termios
 import time
-import re
 
-# Change this line to point to your alma binary
-#ALMA_BIN="/home/jyna/Alfred/Alma/alma"
 ALMA_BIN="/home/justin/catkin_ws/src/rosalma/scripts/alma"
 DEBUG=False
-
+#ALMA_BIN="/home/jyna/Alfred/Alma/alma"
 
 io = None
+db_list = ["start"]
 
 """
 spawn a child process/program, connect my stdin/stdout to child process's
@@ -45,10 +40,6 @@ def spawn(prog, *args):                       # pass progname, cmdline args
         assert False, 'execvp failed!'        # os.exec call never returns here
 
 
-"""
-Class to handle a line of input from alma; along with a boolean indicating whether it's the prompt
-"""
-
 class alma_line:
     def __init__(self, line, is_cmd_prompt = False):
         if is_cmd_prompt:
@@ -58,9 +49,6 @@ class alma_line:
             self.line = line
             self.is_prompt = False
 
-"""
-Class to handle alma subprocess communication
-"""
 class alma_io:
     def __init__(self, alma_bin):
         # Start alma; my stdin will be alma's stdout and vice versa
@@ -70,7 +58,7 @@ class alma_io:
         self.at_prompt = False
 
         
-    # Keep reading until we get a prompt
+
     def wait_for_prompt(self):
         if not self.at_prompt:  
             line = self.read_line()
@@ -88,13 +76,35 @@ class alma_io:
         sys.stdout.flush()
         self.locked = False
         self.at_prompt = False
-
+        
+    # def getch(self):
+    #     """getch() -> key character
     
+    #     Read a single keypress from stdin and return the resulting
+    #     character.  Nothing is echoed to the console. This call will
+    #     block if a keypress is not already available, but will not wait
+    #     for Enter to be pressed. 
+
+    #     If the pressed key was a modifier key, nothing will be detected; if
+    #     it were a special function key, it may return the first character of
+    #     of an escape sequence, leaving additional characters in the buffer.
+        
+    #     Copied from
+    #     http://code.activestate.com/recipes/577977-get-single-keypress/
+    #     """
+    #     fd = sys.stdin.fileno()
+    #     old_settings = termios.tcgetattr(fd)
+    #     try:
+    #         tty.setraw(fd)
+    #         ch = sys.stdin.read(1)
+    #     finally:
+    #         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    #     return ch
+
     def getch(self):
         a = sys.stdin.read(1)
         return a
 
-    # Read a line
     def read_line(self):
         while self.locked:
             if DEBUG: sys.stderr.write('read locked! ')
@@ -119,7 +129,7 @@ class alma_io:
         
                 
 """
-Read commands on the command topic and send them to alma. 
+Read commands on the topic and send them to alma. 
 """        
 def alma_cmd_callback(data):
     global io
@@ -129,18 +139,20 @@ def alma_cmd_callback(data):
 
 
 """
-Periodically advance the time step and publish the new database
+Get the database and publish each line on the topic.
 """
 def alma_publish_db():
     global io
 
-    # We'll publish once every 4 seconds
-    db_pub = rospy.Publisher("alma_db", AlmaDB, queue_size=100)
+    db_list = []
+    
+    sys.stderr.write('IN ALMA PUBLISH DB')
+    db_pub = rospy.Publisher("alma_db", String, queue_size=100)
     rate = rospy.Rate(0.25)
 
     while not rospy.is_shutdown():
-        db_list = []   # All the raw lines of the database
-    
+        # TODO How does Alma know when to stop stepping?
+        # Answer:  it will keep going as long as the node is running
         # Step once in the logic engine
         if DEBUG: sys.stderr.write('STEPPING')
         io.write('sr.')
@@ -150,67 +162,54 @@ def alma_publish_db():
         io.write('sdb.')
         if DEBUG: sys.stderr.write('SENT SDB')
         
-        # Add the lines to db_list and process the list (ignoring some lines)
+        # Get the response, send each line to the topic
         line = io.read_line()
-        while not line.is_prompt:
+        #tmp_line = line
+        if DEBUG: sys.stderr.write('Got line: ' + line.line)
+        while not line.is_prompt: # this is infinite loop because line will never be set to prompt in this code.
+            #db_pub.publish(line.line) #one line of the whole database, so program is printing out multiple copies of database each time a command is given.
+            #tmp_line = line
             if (line.line.find("idling") == -1) and (line.line.find(":") != -1) :
+#            	and line.line.find("now") == -1) :
             	db_list.append(line.line);
+            #publishing the whole list every time for now until we figure out
+            #what we want to do with this list.
+
+            if DEBUG: sys.stderr.write('Sent line: ' + line.line)
             line = io.read_line()
+            #if line.line is '': 
+             #   db_pub.publish(tmp_line.line)
+              #  line.is_prompt = True
+        #db_pub.publish('\n'.join(db_list));
         db_pub.publish(list_to_msg(db_list));
+        db_list = []
         rate.sleep()
         
-"""
-Take the list of database lines, convert it to an array of AlmaFmla messages.
-"""
+        #options: we want to first save everything that comes up, so we have to get rid of doubles. But alma
+        #prints the whole database always. So how to filter through this data base to find the most recent ones
+        #that aren't already in the database.
+        #how to save information to a database at all?
+
 def list_to_msg(db_list):
     msg_dict = {}
 
-    # Process list; every formula goes in.  It will be trusted unless otherwise noted
-    parse = re.compile(".*distrusted\((\\d+),(\\d+)\)")
+    # First, put every formula in the database in as trusted
     for line in db_list:
         linep = line.split(':')
         code = int(linep[0])
         fmla = linep[1]
         
         trusted = True
-        # Is this a distrust formula?  If so, mark the distrusted formula as distrusted.
-        # Note that we cannot assume the distrusted formula is already in the message
-        # dictionary.
-        m = parse.match(fmla)
-        if m:
-            referent = int(m.group(1))
-            timed = int(m.group(2)) # Not used right now, but that info is there
-            if msg_dict.has_key(referent):
-                msg_dict[referent][1] = False
-            else:
-                msg_dict[referent] = ["", False]
+        msg_dict[code] = [fmla, True]
 
-        # In any case, add the formula and mark it trusted *unless* we've already marked it
-        if msg_dict.has_key(code):
-            msg_dict[code][0] = fmla
-        else:
-            msg_dict[code] = [fmla, True]
-
-    # Now iterate through the dictionary and add each entry to the list.
-    db = AlmaDB()
-    for code, val in msg_dict.iteritems():
-        alma_msg = AlmaFmla()
-        alma_msg.code = code
-        alma_msg.fmla = msg_dict[code][0]
-        alma_msg.trusted = msg_dict[code][1]
-        db.entries.append(alma_msg)
-    return db
 
 def main():
     global io
-    # Listen to alma_node_cmd topic for commands.  Right now they'll
-    # just be strings; we'll probably want more structure long term.
+    # Listen to alma_node_cmd topic for commands.  Right now they'll just be strings; we'll probably
+    # want more structure long term.
     rospy.init_node('alma_node')
     io = alma_io(ALMA_BIN)
-    # this node called 'alma_node' subscribes to the ros topic called
-    # 'alma_node_cmd' and invokes with the message as the first arg.
-    rospy.Subscriber("alma_node_cmd", String, alma_cmd_callback)
-    
+    rospy.Subscriber("alma_node_cmd", String, alma_cmd_callback) # this node called 'alma_node' subscribes to the ros topic called 'alma_node_cmd' and invokes with the message as the first arg.
     alma_publish_db()
     rospy.spin()
 
@@ -220,6 +219,11 @@ if __name__ == '__main__':
 
 
 #TODO
+#Try to structure the output of the publisher so that the messages have three parts:  
+# i.  Timestamp, 
+# ii.  Whatever that other number before all the sentences is, 
+# iii.  The actual sentence
+
 #Structure the subscriber to take messages with two parts:  
 # i.  The kind of thing we want to do (add a formula or delete would be the two logical places to start), 
 # ii.  The actual formula
